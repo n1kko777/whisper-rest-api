@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { registerUser } from "@/lib/api";
+import { getErrorMessage } from "@/lib/errors";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -34,11 +35,7 @@ export default function RegisterPage() {
       await registerUser({ username, password });
       router.push("/login");
     } catch (err: any) {
-      if (err.response) {
-        setError(err.response.data.detail);
-      } else {
-        setError("An unexpected error occurred.");
-      }
+      setError(getErrorMessage(err));
     }
   };
 

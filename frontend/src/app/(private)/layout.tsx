@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -16,10 +17,11 @@ export default function PrivateLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+
   const handleLogout = () => {
-    // Here you would typically clear the user's session/token
-    console.log("Logging out");
-    window.location.href = "/";
+    localStorage.removeItem("token");
+    router.push("/login");
   };
 
   return (

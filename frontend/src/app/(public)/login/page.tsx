@@ -12,6 +12,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { loginUser } from "@/lib/api";
+import { getErrorMessage } from "@/lib/errors";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
@@ -24,20 +25,13 @@ export default function LoginPage() {
 
   const handleLogin = async () => {
     setError("");
-    const formData = new FormData();
-    formData.append("username", username);
-    formData.append("password", password);
 
     try {
-      const response = await loginUser(formData);
+      const response = await loginUser({ username, password });
       localStorage.setItem("token", response.data.access_token);
       router.push("/dashboard");
     } catch (err: any) {
-      if (err.response) {
-        setError(err.response.data.detail);
-      } else {
-        setError("An unexpected error occurred.");
-      }
+      setError(getErrorMessage(err));
     }
   };
 

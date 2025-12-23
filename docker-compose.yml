@@ -12,26 +12,40 @@ services:
       - "8000:8000"
     environment:
       - SECRET_KEY=${SECRET_KEY}
-      - DATABASE_URL=sqlite:///./test.db
+      - DATABASE_URL=sqlite:////data/app.db
+      - UPLOAD_DIR=/uploads
     depends_on:
       - redis
+    volumes:
+      - app_data:/data
+      - app_uploads:/uploads
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
 
   worker:
     build: .
     environment:
       - SECRET_KEY=${SECRET_KEY}
-      - DATABASE_URL=sqlite:///./test.db
+      - DATABASE_URL=sqlite:////data/app.db
+      - UPLOAD_DIR=/uploads
     depends_on:
       - redis
+    volumes:
+      - app_data:/data
+      - app_uploads:/uploads
     command: celery -A app.worker.celery_app worker --loglevel=info
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
     ports:
       - "3000:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      # Expose backend to the browser; FastAPI routes live under /api
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
 
+volumes:
+  app_data:
+  app_uploads:

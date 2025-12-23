@@ -16,6 +16,9 @@ def create_user(db: Session, username: str, password: str):
 def get_task(db: Session, task_id: str):
     return db.query(models.Task).filter(models.Task.id == task_id).first()
 
+def get_tasks_for_user(db: Session, user_id: int):
+    return db.query(models.Task).filter(models.Task.user_id == user_id).all()
+
 def create_task(db: Session, task_id: str, user_id: int):
     db_task = models.Task(id=task_id, user_id=user_id)
     db.add(db_task)

@@ -20,15 +20,39 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import withAuth from "@/components/withAuth";
-import { getTaskStatus, transcribeFile } from "@/lib/api";
+import { getTaskStatus, getTasks, transcribeFile, TaskStatus } from "@/lib/api";
 import { useReactMediaRecorder } from "react-media-recorder";
 
 interface Task {
-  id: number;
+  id: string;
   name: string;
-  status: string;
+  status: TaskStatus;
   result: string;
 }
+
+const TASK_NAMES_STORAGE_KEY = "taskNames";
+
+const readStoredTaskNames = (): Record<string, string> => {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(TASK_NAMES_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (error) {
+    console.error("Failed to read stored task names:", error);
+    return {};
+  }
+};
+
+const rememberTaskName = (taskId: string, fileName: string) => {
+  if (typeof window === "undefined") return;
+  const names = readStoredTaskNames();
+  names[taskId] = fileName;
+  try {
+    localStorage.setItem(TASK_NAMES_STORAGE_KEY, JSON.stringify(names));
+  } catch (error) {
+    console.error("Failed to persist task name:", error);
+  }
+};
 
 function DashboardPage() {
   const [file, setFile] = useState<File | null>(null);
@@ -37,18 +61,54 @@ function DashboardPage() {
     useReactMediaRecorder({ audio: true });
 
   useEffect(() => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      return;
+    }
+
+    const storedNames = readStoredTaskNames();
+
+    const loadTasks = async () => {
+      try {
+        const response = await getTasks(token);
+        setTasks(
+          response.data.map((task) => ({
+            id: task.id,
+            name: storedNames[task.id] || task.id,
+            status: task.status,
+            result: task.result || "",
+          }))
+        );
+      } catch (error) {
+        console.error("Error fetching tasks:", error);
+      }
+    };
+
+    loadTasks();
+  }, []);
+
+  useEffect(() => {
+    if (!tasks.length) {
+      return;
+    }
+
     const interval = setInterval(() => {
       const token = localStorage.getItem("token");
       if (token) {
         tasks.forEach(async (task) => {
-          if (task.status === "pending" || task.status === "processing") {
+          const normalizedStatus = task.status?.toUpperCase?.() || task.status;
+          if (normalizedStatus === "PENDING" || normalizedStatus === "PROCESSING") {
             try {
               const response = await getTaskStatus(task.id, token);
               const updatedTask = response.data;
               setTasks((prevTasks) =>
                 prevTasks.map((t) =>
                   t.id === updatedTask.id
-                    ? { ...t, status: updatedTask.status, result: updatedTask.result }
+                    ? {
+                        ...t,
+                        status: updatedTask.status,
+                        result: updatedTask.result || "",
+                      }
                     : t
                 )
               );
@@ -77,9 +137,10 @@ function DashboardPage() {
         const newTask = {
           id: response.data.task_id,
           name: fileToUpload.name,
-          status: "pending",
+          status: "PENDING" as TaskStatus,
           result: "",
         };
+        rememberTaskName(newTask.id, newTask.name);
         setTasks((prevTasks) => [...prevTasks, newTask]);
       } catch (error) {
         console.error("Error uploading file:", error);

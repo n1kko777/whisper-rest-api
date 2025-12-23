@@ -11,3 +11,5 @@ openai-whisper
 pydantic-settings
 tenacity
 ffmpeg-python
+pytest
+httpx

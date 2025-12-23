@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.db import crud, models
 from app.api import deps
+from app.core.config import settings
 from app.worker.tasks import transcribe_task, health_check
 
 router = APIRouter()
@@ -21,15 +22,23 @@ def create_transcription_task(
     task_id = str(uuid.uuid4())
     
     # Save the uploaded file temporarily
-    upload_dir = Path("uploads")
-    upload_dir.mkdir(exist_ok=True)
+    upload_dir = Path(settings.UPLOAD_DIR)
+    upload_dir.mkdir(parents=True, exist_ok=True)
     file_path = upload_dir / f"{task_id}_{file.filename}"
     with file_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
     crud.create_task(db, task_id, current_user.id)
     
-    transcribe_task.delay(task_id, language)
+    try:
+        transcribe_task.delay(task_id, language, str(file_path))
+    except Exception as exc:
+        crud.update_task_status(db, task_id, models.TaskStatus.FAILURE, result=str(exc))
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not enqueue transcription task",
+        ) from exc
 
     return {"task_id": task_id}
 
@@ -47,7 +56,15 @@ def get_transcription_status(
     if task.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this task")
 
-    return {"status": task.status, "result": task.result}
+    return {"id": task.id, "status": task.status, "result": task.result}
+
+@router.get("/tasks")
+def list_user_tasks(
+    db: Session = Depends(deps.get_db),
+    current_user: models.User = Depends(deps.get_current_user),
+):
+    tasks = crud.get_tasks_for_user(db, current_user.id)
+    return [{"id": task.id, "status": task.status, "result": task.result} for task in tasks]
 
 @router.post("/health-check")
 def run_health_check():
