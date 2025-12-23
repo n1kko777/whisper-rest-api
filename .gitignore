@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+.venv/
+venv/
+venv.bak/
+.env
+
+# FastAPI/Uvicorn
+uvicorn.log
+celery.log
+test.db
+
+# Celery
+celerybeat-schedule
+
+# Editors
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+.Trashes
+*.swp
+*~
+.nfs*

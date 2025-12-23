@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+passlib[bcrypt]
+bcrypt==3.2.2
+python-jose[cryptography]
+python-multipart
+celery
+redis
+openai-whisper
+pydantic-settings
+tenacity
+ffmpeg-python
