@@ -83,7 +83,8 @@ def delete_user_task(
 ):
     task = crud.get_task(db, task_id)
     if not task:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        # Treat deletes as idempotent so removing an already-missing task still succeeds
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     if task.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to delete this task")

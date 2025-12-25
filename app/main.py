@@ -1,11 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.endpoints import auth, transcribe
-from app.db import models
-from app.db.database import engine, ensure_created_at_column
+from app.db.database import init_db
 
-models.Base.metadata.create_all(bind=engine)
-ensure_created_at_column()
+# Ensure tables exist when the API process starts
+init_db()
 
 app = FastAPI(title="Whisper REST API")
 

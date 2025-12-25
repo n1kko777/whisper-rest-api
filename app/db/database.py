@@ -26,3 +26,11 @@ def ensure_created_at_column():
 
     with engine.begin() as connection:
         connection.execute(text(ddl))
+
+
+def init_db():
+    """Create database tables and patch legacy schemas if needed."""
+    from app.db import models
+
+    models.Base.metadata.create_all(bind=engine)
+    ensure_created_at_column()

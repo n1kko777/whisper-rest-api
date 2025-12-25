@@ -1,6 +1,8 @@
 import os
 from celery import Celery
 
+from app.db.database import init_db
+
 broker_url = os.environ.get("CELERY_BROKER_URL", "redis://redis:6379/0")
 result_backend = os.environ.get("CELERY_RESULT_BACKEND", broker_url)
 
@@ -20,3 +22,6 @@ celery_app.conf.update(
     task_always_eager=os.environ.get("CELERY_TASK_ALWAYS_EAGER", "false").lower() == "true",
     task_eager_propagates=os.environ.get("CELERY_TASK_EAGER_PROPAGATES", "true").lower() == "true",
 )
+
+# Ensure database schema exists when the worker process starts
+init_db()

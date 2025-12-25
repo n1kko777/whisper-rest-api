@@ -37,6 +37,10 @@ def transcribe_task(task_id: str, language: str, file_path: str):
         transcription = _transcribe_audio(path, language)
         crud.update_task_status(db, task_id, models.TaskStatus.SUCCESS, result=transcription)
         return transcription
+    except RuntimeError as e:
+        # Expected failures (e.g., empty transcription) are recorded but not re-raised to avoid noisy Celery errors
+        crud.update_task_status(db, task_id, models.TaskStatus.FAILURE, result=str(e))
+        return str(e)
     except Exception as e:
         crud.update_task_status(db, task_id, models.TaskStatus.FAILURE, result=str(e))
         raise

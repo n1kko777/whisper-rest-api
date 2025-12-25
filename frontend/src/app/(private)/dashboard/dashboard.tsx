@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import axios from "axios";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -29,7 +31,7 @@ import {
   TaskStatus,
 } from "@/lib/api";
 import { useReactMediaRecorder } from "react-media-recorder";
-import { FileAudio, Mic, Trash } from "lucide-react";
+import { FileAudio, Mic, Square, Trash } from "lucide-react";
 
 interface Task {
   id: string;
@@ -83,10 +85,22 @@ const sortTasksByNewest = (taskList: Task[]) =>
 function DashboardPage() {
   const [file, setFile] = useState<File | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
-  const { status, startRecording, stopRecording, mediaBlobUrl } =
+  const { status, startRecording, stopRecording, mediaBlobUrl, clearBlobUrl } =
     useReactMediaRecorder({ audio: true });
+  const [recordingStart, setRecordingStart] = useState<number | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [microphoneStatus, setMicrophoneStatus] = useState<
+    "unknown" | "granted" | "denied" | "prompt"
+  >("unknown");
+  const [permissionError, setPermissionError] = useState("");
+  const router = useRouter();
   const isRecording = status === "recording";
   const canUploadRecording = Boolean(mediaBlobUrl) && !isRecording;
+
+  const handleUnauthorized = useCallback(() => {
+    localStorage.removeItem("token");
+    router.replace("/login");
+  }, [router]);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -108,12 +122,16 @@ function DashboardPage() {
         }));
         setTasks(sortTasksByNewest(mappedTasks));
       } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.status === 401) {
+          handleUnauthorized();
+          return;
+        }
         console.error("Error fetching tasks:", error);
       }
     };
 
     loadTasks();
-  }, []);
+  }, [handleUnauthorized]);
 
   useEffect(() => {
     if (!tasks.length) {
@@ -143,6 +161,10 @@ function DashboardPage() {
                 )
               );
             } catch (error) {
+              if (axios.isAxiosError(error) && error.response?.status === 401) {
+                handleUnauthorized();
+                return;
+              }
               console.error(`Error fetching status for task ${task.id}:`, error);
             }
           }
@@ -151,7 +173,53 @@ function DashboardPage() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [tasks]);
+  }, [handleUnauthorized, tasks]);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.permissions?.query) {
+      return;
+    }
+
+    const updateState = (state: PermissionState) => {
+      setMicrophoneStatus(
+        state === "granted" ? "granted" : state === "denied" ? "denied" : "prompt"
+      );
+    };
+
+    const checkPermission = async () => {
+      try {
+        const permission = await navigator.permissions.query({
+          name: "microphone" as PermissionName,
+        });
+        updateState(permission.state);
+        permission.onchange = () => updateState(permission.state);
+      } catch (error) {
+        console.error("Unable to check microphone permission:", error);
+      }
+    };
+
+    checkPermission();
+  }, []);
+
+  useEffect(() => {
+    if (!isRecording) {
+      setRecordingStart(null);
+      setElapsedMs(0);
+      return;
+    }
+
+    const start = recordingStart ?? Date.now();
+    if (recordingStart === null) {
+      setRecordingStart(start);
+    }
+
+    const interval = window.setInterval(
+      () => setElapsedMs(Date.now() - start),
+      200
+    );
+
+    return () => clearInterval(interval);
+  }, [isRecording, recordingStart]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
@@ -186,21 +254,68 @@ function DashboardPage() {
   };
 
   const handleRecordedAudio = async () => {
-    if (mediaBlobUrl) {
-      const audioBlob = await fetch(mediaBlobUrl).then((r) => r.blob());
-      const audioFile = new File([audioBlob], "recorded_audio.wav", {
-        type: "audio/wav",
-      });
-      uploadFile(audioFile);
+    if (!mediaBlobUrl) return;
+
+    const audioBlob = await fetch(mediaBlobUrl).then((r) => r.blob());
+    const audioFile = new File([audioBlob], "recorded_audio.wav", {
+      type: "audio/wav",
+    });
+    uploadFile(audioFile);
+  };
+
+  const handleClearRecording = () => {
+    clearBlobUrl();
+    setRecordingStart(null);
+    setElapsedMs(0);
+  };
+
+  const ensureMicrophonePermission = async () => {
+    setPermissionError("");
+    if (typeof navigator === "undefined") return true;
+
+    try {
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({
+          name: "microphone" as PermissionName,
+        });
+        if (permission.state === "denied") {
+          setMicrophoneStatus("denied");
+          setPermissionError(
+            "Microphone access is blocked. Please allow it to start recording."
+          );
+          return false;
+        }
+
+        if (permission.state === "granted") {
+          setMicrophoneStatus("granted");
+          return true;
+        }
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+      setMicrophoneStatus("granted");
+      return true;
+    } catch (error) {
+      console.error("Microphone permission denied:", error);
+      setMicrophoneStatus("denied");
+      setPermissionError(
+        "Microphone permission is required to record audio. Please enable it in your browser."
+      );
+      return false;
     }
   };
 
-  const toggleRecording = () => {
+  const toggleRecording = async () => {
     if (isRecording) {
       stopRecording();
-    } else {
-      startRecording();
+      return;
     }
+
+    const allowed = await ensureMicrophonePermission();
+    if (!allowed) return;
+
+    startRecording();
   };
 
   const handleDeleteTask = async (taskId: string) => {
@@ -209,11 +324,15 @@ function DashboardPage() {
 
     try {
       await deleteTask(taskId, token);
-      forgetTaskName(taskId);
-      setTasks((prevTasks) => prevTasks.filter((task) => task.id !== taskId));
     } catch (error) {
-      console.error(`Error deleting task ${taskId}:`, error);
+      if (!axios.isAxiosError(error) || error.response?.status !== 404) {
+        console.error(`Error deleting task ${taskId}:`, error);
+        return;
+      }
     }
+
+    forgetTaskName(taskId);
+    setTasks((prevTasks) => prevTasks.filter((task) => task.id !== taskId));
   };
 
   return (
@@ -259,7 +378,11 @@ function DashboardPage() {
                   )}
                   size="icon"
                 >
-                  <Mic className="h-8 w-8 sm:h-9 sm:w-9" />
+                  {isRecording ? (
+                    <Square className="h-8 w-8 sm:h-9 sm:w-9" />
+                  ) : (
+                    <Mic className="h-8 w-8 sm:h-9 sm:w-9" />
+                  )}
                 </Button>
                 <p className="text-sm text-slate-700 sm:text-base">
                   {isRecording
@@ -267,9 +390,48 @@ function DashboardPage() {
                     : "Tap to start recording"}
                 </p>
                 <p className="text-xs text-slate-500">
-                  Status: {status || "idle"}
+                  {isRecording && (
+                    <span className="ml-2 font-semibold text-slate-700">
+                      {new Date(Math.max(0, elapsedMs)).toISOString().substring(14, 19)}
+                    </span>
+                  )}
                 </p>
+                {permissionError ? (
+                  <p className="text-xs text-destructive">{permissionError}</p>
+                ) : microphoneStatus === "denied" ? (
+                  <p className="text-xs text-amber-600">
+                    Microphone access is blocked. Update your browser settings to
+                    record.
+                  </p>
+                ) : null}
               </div>
+              {mediaBlobUrl && !isRecording ? (
+                <div className="flex w-full flex-col gap-3 rounded-2xl bg-slate-50/80 p-4 shadow-inner ring-1 ring-slate-200">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm font-semibold text-slate-800">
+                      Recorded audio
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="gap-2 text-slate-700 hover:text-destructive"
+                      onClick={handleClearRecording}
+                    >
+                      <Trash className="h-4 w-4" />
+                      Delete
+                    </Button>
+                  </div>
+                  <audio
+                    className="w-full rounded-xl ring-1 ring-slate-200"
+                    src={mediaBlobUrl}
+                    controls
+                  />
+                  <p className="text-xs text-slate-500">
+                    Listen back before sending to transcription or delete to
+                    record again.
+                  </p>
+                </div>
+              ) : null}
               <Button
                 onClick={handleRecordedAudio}
                 disabled={!canUploadRecording}
