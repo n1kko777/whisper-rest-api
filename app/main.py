@@ -12,7 +12,7 @@ app = FastAPI(title="Whisper REST API")
 # Allow frontend dev server to call the API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://192.168.0.17:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
