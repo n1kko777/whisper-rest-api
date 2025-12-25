@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -20,14 +21,22 @@ import {
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import withAuth from "@/components/withAuth";
-import { getTaskStatus, getTasks, transcribeFile, TaskStatus } from "@/lib/api";
+import {
+  deleteTask,
+  getTaskStatus,
+  getTasks,
+  transcribeFile,
+  TaskStatus,
+} from "@/lib/api";
 import { useReactMediaRecorder } from "react-media-recorder";
+import { FileAudio, Mic, Trash } from "lucide-react";
 
 interface Task {
   id: string;
   name: string;
   status: TaskStatus;
   result: string;
+  createdAt?: string;
 }
 
 const TASK_NAMES_STORAGE_KEY = "taskNames";
@@ -54,11 +63,30 @@ const rememberTaskName = (taskId: string, fileName: string) => {
   }
 };
 
+const forgetTaskName = (taskId: string) => {
+  if (typeof window === "undefined") return;
+  const names = readStoredTaskNames();
+  delete names[taskId];
+  try {
+    localStorage.setItem(TASK_NAMES_STORAGE_KEY, JSON.stringify(names));
+  } catch (error) {
+    console.error("Failed to persist task name removal:", error);
+  }
+};
+
+const sortTasksByNewest = (taskList: Task[]) =>
+  [...taskList].sort(
+    (a, b) =>
+      new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+  );
+
 function DashboardPage() {
   const [file, setFile] = useState<File | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const { status, startRecording, stopRecording, mediaBlobUrl } =
     useReactMediaRecorder({ audio: true });
+  const isRecording = status === "recording";
+  const canUploadRecording = Boolean(mediaBlobUrl) && !isRecording;
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -71,14 +99,14 @@ function DashboardPage() {
     const loadTasks = async () => {
       try {
         const response = await getTasks(token);
-        setTasks(
-          response.data.map((task) => ({
-            id: task.id,
-            name: storedNames[task.id] || task.id,
-            status: task.status,
-            result: task.result || "",
-          }))
-        );
+        const mappedTasks = response.data.map((task) => ({
+          id: task.id,
+          name: storedNames[task.id] || task.id,
+          status: task.status,
+          result: task.result || "",
+          createdAt: task.created_at,
+        }));
+        setTasks(sortTasksByNewest(mappedTasks));
       } catch (error) {
         console.error("Error fetching tasks:", error);
       }
@@ -102,14 +130,16 @@ function DashboardPage() {
               const response = await getTaskStatus(task.id, token);
               const updatedTask = response.data;
               setTasks((prevTasks) =>
-                prevTasks.map((t) =>
-                  t.id === updatedTask.id
-                    ? {
-                        ...t,
-                        status: updatedTask.status,
-                        result: updatedTask.result || "",
-                      }
-                    : t
+                sortTasksByNewest(
+                  prevTasks.map((t) =>
+                    t.id === updatedTask.id
+                      ? {
+                          ...t,
+                          status: updatedTask.status,
+                          result: updatedTask.result || "",
+                        }
+                      : t
+                  )
                 )
               );
             } catch (error) {
@@ -139,9 +169,10 @@ function DashboardPage() {
           name: fileToUpload.name,
           status: "PENDING" as TaskStatus,
           result: "",
+          createdAt: new Date().toISOString(),
         };
         rememberTaskName(newTask.id, newTask.name);
-        setTasks((prevTasks) => [...prevTasks, newTask]);
+        setTasks((prevTasks) => sortTasksByNewest([newTask, ...prevTasks]));
       } catch (error) {
         console.error("Error uploading file:", error);
       }
@@ -164,62 +195,136 @@ function DashboardPage() {
     }
   };
 
+  const toggleRecording = () => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      startRecording();
+    }
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    try {
+      await deleteTask(taskId, token);
+      forgetTaskName(taskId);
+      setTasks((prevTasks) => prevTasks.filter((task) => task.id !== taskId));
+    } catch (error) {
+      console.error(`Error deleting task ${taskId}:`, error);
+    }
+  };
+
   return (
-    <div className="space-y-6">
-      <Tabs defaultValue="upload">
-        <TabsList>
-          <TabsTrigger value="upload">Upload File</TabsTrigger>
-          <TabsTrigger value="record">Record Voice</TabsTrigger>
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
+      <Tabs defaultValue="record" className="w-full">
+        <TabsList className="mx-auto grid w-full max-w-xl grid-cols-2 gap-2 rounded-full bg-muted p-0">
+          <TabsTrigger
+            value="record"
+            className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+          >
+            <Mic className="h-4 w-4" />
+            Record
+          </TabsTrigger>
+          <TabsTrigger
+            value="upload"
+            className="flex w-full items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-semibold text-muted-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm"
+          >
+            <FileAudio className="h-4 w-4" />
+            File
+          </TabsTrigger>
         </TabsList>
-        <TabsContent value="upload">
-          <Card>
-            <CardHeader>
-              <CardTitle>Upload an audio file</CardTitle>
-              <CardDescription>
-                Select an audio file from your computer to transcribe.
+        <TabsContent value="record" className="mt-6">
+          <Card className="rounded-3xl border-0 bg-white/90 shadow-md shadow-slate-200 ring-1 ring-slate-100">
+            <CardHeader className="text-center">
+              <CardTitle className="text-xl font-semibold text-slate-900">
+                Record your voice
+              </CardTitle>
+              <CardDescription className="text-base text-slate-600">
+                Start recording, then send the file for transcription.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <Input type="file" onChange={handleFileChange} />
-              <Button onClick={handleUpload}>Upload and Transcribe</Button>
+            <CardContent className="flex flex-col gap-6 p-6 sm:p-8">
+              <div className="flex flex-col items-center gap-4 text-center">
+                <Button
+                  type="button"
+                  aria-pressed={isRecording}
+                  onClick={toggleRecording}
+                  className={cn(
+                    "flex h-24 w-24 items-center justify-center rounded-full shadow-lg shadow-black/10 transition-transform duration-150 hover:scale-105 sm:h-28 sm:w-28",
+                    isRecording
+                      ? "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90 focus-visible:ring-primary"
+                  )}
+                  size="icon"
+                >
+                  <Mic className="h-8 w-8 sm:h-9 sm:w-9" />
+                </Button>
+                <p className="text-sm text-slate-700 sm:text-base">
+                  {isRecording
+                    ? "Tap to stop recording"
+                    : "Tap to start recording"}
+                </p>
+                <p className="text-xs text-slate-500">
+                  Status: {status || "idle"}
+                </p>
+              </div>
+              <Button
+                onClick={handleRecordedAudio}
+                disabled={!canUploadRecording}
+                className="w-full rounded-2xl bg-primary px-6 py-4 text-base font-semibold text-primary-foreground shadow-lg shadow-black/10 transition-transform duration-150 hover:translate-y-[-1px] hover:bg-primary/90 focus-visible:ring-primary disabled:translate-y-0"
+              >
+                Transcribe to text
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
-        <TabsContent value="record">
-          <Card>
-            <CardHeader>
-              <CardTitle>Record your voice</CardTitle>
-              <CardDescription>
-                Click the button to start/stop recording.
+        <TabsContent value="upload" className="mt-6">
+          <Card className="rounded-3xl border-0 bg-white/90 shadow-md shadow-slate-200 ring-1 ring-slate-100">
+            <CardHeader className="space-y-2">
+              <CardTitle className="text-xl font-semibold text-slate-900">
+                Upload audio
+              </CardTitle>
+              <CardDescription className="text-base text-slate-600">
+                Choose a file and send it for transcription.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <p>Status: {status}</p>
-              <Button onClick={startRecording}>Start Recording</Button>
-              <Button onClick={stopRecording}>Stop Recording</Button>
-              <Button onClick={handleRecordedAudio} disabled={!mediaBlobUrl}>
-                Upload Recording
+            <CardContent className="flex flex-col gap-4 p-6 sm:p-8">
+              <Input
+                type="file"
+                onChange={handleFileChange}
+                className="h-auto cursor-pointer rounded-xl border-2 border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-sm file:mr-3 file:rounded-lg file:bg-white file:px-4 file:py-2 file:font-medium hover:border-slate-300"
+              />
+              <Button
+                onClick={handleUpload}
+                className="w-full rounded-xl bg-primary px-6 py-3 text-base font-semibold text-primary-foreground shadow-md shadow-black/10 hover:bg-primary/90 focus-visible:ring-primary"
+              >
+                Upload and transcribe
               </Button>
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
 
-      <Card>
+      <Card className="rounded-3xl border-0 bg-white/90 shadow-md shadow-slate-200 ring-1 ring-slate-100">
         <CardHeader>
-          <CardTitle>Transcription History</CardTitle>
-          <CardDescription>
-            View the status and results of your previous transcriptions.
+          <CardTitle className="text-xl font-semibold text-slate-900">
+            Transcription history
+          </CardTitle>
+          <CardDescription className="text-base text-slate-600">
+            Track status and results of your previous tasks.
           </CardDescription>
         </CardHeader>
-        <CardContent>
-          <Table>
+        <CardContent className="overflow-x-auto">
+          <Table className="min-w-[640px]">
             <TableHeader>
               <TableRow>
                 <TableHead>Task ID</TableHead>
-                <TableHead>File Name</TableHead>
+                <TableHead>File name</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead>Result</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -229,6 +334,16 @@ function DashboardPage() {
                   <TableCell>{task.name}</TableCell>
                   <TableCell>{task.status}</TableCell>
                   <TableCell>{task.result}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={`Delete task ${task.id}`}
+                      onClick={() => handleDeleteTask(task.id)}
+                    >
+                      <Trash className="h-4 w-4" />
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
