@@ -94,6 +94,8 @@ function DashboardPage() {
   >("unknown");
   const [permissionError, setPermissionError] = useState("");
   const router = useRouter();
+  const insecureContextMessage =
+    "Browser blocks microphone on insecure origins. Open the app over HTTPS or from localhost.";
   const isRecording = status === "recording";
   const canUploadRecording = Boolean(mediaBlobUrl) && !isRecording;
 
@@ -101,6 +103,16 @@ function DashboardPage() {
     localStorage.removeItem("token");
     router.replace("/login");
   }, [router]);
+
+  const isSecureBrowserContext = () =>
+    typeof window !== "undefined" && window.isSecureContext;
+
+  useEffect(() => {
+    if (!isSecureBrowserContext()) {
+      setMicrophoneStatus("denied");
+      setPermissionError(insecureContextMessage);
+    }
+  }, []);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -176,7 +188,11 @@ function DashboardPage() {
   }, [handleUnauthorized, tasks]);
 
   useEffect(() => {
-    if (typeof navigator === "undefined" || !navigator.permissions?.query) {
+    if (
+      typeof navigator === "undefined" ||
+      !navigator.permissions?.query ||
+      !isSecureBrowserContext()
+    ) {
       return;
     }
 
@@ -272,6 +288,12 @@ function DashboardPage() {
   const ensureMicrophonePermission = async () => {
     setPermissionError("");
     if (typeof navigator === "undefined") return true;
+
+    if (!isSecureBrowserContext()) {
+      setMicrophoneStatus("denied");
+      setPermissionError(insecureContextMessage);
+      return false;
+    }
 
     try {
       if (navigator.permissions?.query) {
